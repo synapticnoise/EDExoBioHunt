@@ -1,0 +1,20 @@
+# Visual studio user preference files
+*.suo
+*.csproj.user
+*.DotSettings.user
+.vs/
+
+# Output files
+**/bin/*
+**/obj/*
+
+# NuGet package rules
+**/packages/*
+!**/packages/*.config
+!**/.nuget/*
+
+# Unit Tests
+TestResults
+
+# Dropbox dingleberries
+.dropbox.device
