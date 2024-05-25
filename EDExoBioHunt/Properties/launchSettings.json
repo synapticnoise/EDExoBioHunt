@@ -2,7 +2,7 @@
   "profiles": {
     "EDExoBioHunt": {
       "commandName": "Project",
-      "commandLineArgs": "\"Pru Euq YG-U c16-14\""
+      "commandLineArgs": "\"C:\\Users\\Mike\\Dropbox\\ExoBioList.txt\""
     }
   }
 }

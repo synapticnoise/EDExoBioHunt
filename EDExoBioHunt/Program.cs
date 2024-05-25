@@ -17,15 +17,19 @@ internal class Program
 
     static void Main(string[] args)
     {
-        //var analyser = new ExoBioAnalyser(Message);
-        //analyser.Run();
+        var systemCache = new SystemCache(Message, EdsmClient);
+        systemCache.CacheSystems(["Pru Euq AS-S c17-0", "Pru Euq AS-S c17-1", "Pru Euq AS-S c17-2", "Pru Euq AS-S c17-3", "Pru Euq AS-S c17-4", "Pru Euq AS-S c17-5"]);
+        systemCache.CacheSystemsInSphere("Pru Euq CN-S c17-32", 30);
 
-        var analyser = new ExoBioAnalyser(Message);
-        analyser.OrganicClumpFinder(5, 20);
+        //var analyser = new ExoBioAnalyser(Message);
+        //analyser.OrganicClumpFinder(5, 20);
+
 
         //var finder = new ExoBioSystemFinder(Message);
-        //finder.FindMassCodeSystemsInSphere("Pru Euq LD-K d8-1", 50, ["c", "d"]);
-
+        //finder.FindMassCodeSystemsInSphere("Pru Euq CN-S c17-32", 50, ["c", "d"]);
+        //var filename = args[0];
+        //var file = new FileInfo(filename);
+        //finder.BuildHuntList(file);
 
         //MassCodeHunt("Pru Euq LD-K d8-75", 50, "d");
 
