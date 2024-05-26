@@ -1,6 +1,4 @@
-﻿using System.Text.Json;
-using MemoryPack;
-using Octurnion.Common.Utils;
+﻿using Octurnion.Common.Utils;
 using Octurnion.EliteDangerousUtils;
 using Octurnion.EliteDangerousUtils.EDSM;
 using Octurnion.EliteDangerousUtils.EDSM.Client;
@@ -13,25 +11,18 @@ public class ExoBioSystemFinder
 {
     private readonly StatusUpdateDelegate? _statusUpdateDelegate;
     private readonly EdsmClient _edsmClient = new();
+    private readonly SystemCache _systemCache = new();
 
     public ExoBioSystemFinder(StatusUpdateDelegate? statusUpdateDelegate)
     {
         _statusUpdateDelegate = statusUpdateDelegate;
     }
 
-    public void FindMassCodeSystemsInSphere(string centralSystemName, int radius, string[] massCodes)
+    public void FindMassCodeSystemsInCube(string centralSystemName, int size, string[] massCodes)
     {
         var massCodeSet = new HashSet<string>(massCodes, StringComparer.InvariantCultureIgnoreCase);
-        CacheSystemsInSphere(centralSystemName, radius);
-        var systems = LoadSystems().ToDictionary(s => s.Name!);
-        Info($"Loaded {systems.Count} systems.");
-        var noCoordinates = systems.Values.Count(s => s.Coordinates == null);
-        if (noCoordinates > 0)
-        {
-            Warning($"{noCoordinates} systems have no coordinates.");
-        }
-
-        if (!systems.TryGetValue(centralSystemName, out var centralSystem))
+        _systemCache.CacheSystems([centralSystemName]);
+        if (!_systemCache.SystemsByName.TryGetValue(centralSystemName, out var centralSystem))
         {
             Error($"Could not find central system {centralSystemName}");
             return;
@@ -39,12 +30,14 @@ public class ExoBioSystemFinder
 
         if (centralSystem.Coordinates == null)
         {
-            Error($"Central system has no coordinates.");
+            Error($"Central system {centralSystemName} does not have coordinates.");
             return;
         }
 
-        var centerCoordinates = new SimpleCoordinates(centralSystem.Coordinates);
-        var systemsInRange = systems.Values.Where(s => s.Coordinates != null && centerCoordinates.Distance(new SimpleCoordinates(s.Coordinates)) <= radius).ToArray();
+        _systemCache.CacheSystemsInCube(centralSystem.Coordinates, size);
+
+        var systemsInRange = _systemCache.GetSystemsInCuboid(new Cuboid(centralSystem.Coordinates, size)).ToArray();
+
         Info($"Selected {systemsInRange.Length} systems in range.");
 
         var filteredSystemsByPrefix = CategorizeSystems(systemsInRange)
@@ -124,11 +117,12 @@ public class ExoBioSystemFinder
     {
         var systemNames = LoadSystemFile(systemNameFile).ToArray();
         Info($"Loaded {systemNames.Length} systems.");
+        _systemCache.CacheSystems(systemNames);
         var visitedSystems = GetVisitedSystemNames();
         var nonVisitedSystems = systemNames.Where(s => !visitedSystems.Contains(s)).ToArray();
         Info($"Culled {systemNames.Length - nonVisitedSystems.Length} visited systems.");
-
-        var edsmSystems = GetSystemsFromEdsm(systemNames).ToDictionary(s => s.Name!);
+        
+        //var edsmSystems = GetSystemsFromEdsm(systemNames).ToDictionary(s => s.Name!);
         var navSystems = GetNavRouteSystems();
 
         Console.WriteLine("System\tX\tY\tZ\tClass\tBodies");
@@ -143,41 +137,55 @@ public class ExoBioSystemFinder
             var coordinates = navSystem.coordinates;
             var bodies = string.Empty;
 
-            if (edsmSystems.TryGetValue(name, out var edsmSystem))
+            if (_systemCache.SystemsByName.TryGetValue(name, out var edsmSystem))
             {
                 if (edsmSystem.Coordinates != null)
-                    coordinates = new SimpleCoordinates(edsmSystem.Coordinates);
+                    coordinates = new Coordinates(edsmSystem.Coordinates.X, edsmSystem.Coordinates.Y, edsmSystem.Coordinates.Z);
 
-                var parameters = new EdsmGetSystemParameters
+                if (edsmSystem.Bodies?.Length > 0)
                 {
-                    SystemName = name
-                };
+                    var sc = edsmSystem.Bodies.OfType<EdsmStar>().Count();
+                    var pc = edsmSystem.Bodies.OfType<EdsmPlanet>().Count();
 
-                Info($"Fetching bodies for {name} from EDSM.");
-                _edsmClient.Throttle();
-                var json = _edsmClient.GetSystemBodies(parameters);
+                    bodies = string.Join(", ", Elements());
 
-                if (string.IsNullOrEmpty(json) || json == "{}")
-                {
-                    Warning($"Empty response from EDSM for system {name}");
-                }
-                else
-                {
-                    var withBodies = EdsmSystem.ParseWithBodies(json);
-                    if (withBodies.Bodies?.Length > 0)
+                    IEnumerable<string> Elements()
                     {
-                        var sc = withBodies.Bodies.OfType<EdsmStar>().Count();
-                        var pc = withBodies.Bodies.OfType<EdsmPlanet>().Count();
-
-                        bodies = string.Join(", ", Elements());
-
-                        IEnumerable<string> Elements()
-                        {
-                            if (sc > 0) yield return $"S: {sc}";
-                            if (pc > 0) yield return $"P: {pc}";
-                        }
+                        if (sc > 0) yield return $"S: {sc}";
+                        if (pc > 0) yield return $"P: {pc}";
                     }
                 }
+
+                //var parameters = new EdsmGetSystemParameters
+                //{
+                //    SystemName = name
+                //};
+
+                //Info($"Fetching bodies for {name} from EDSM.");
+                //_edsmClient.Throttle();
+                //var json = _edsmClient.GetSystemBodies(parameters);
+
+                //if (string.IsNullOrEmpty(json) || json == "{}")
+                //{
+                //    Warning($"Empty response from EDSM for system {name}");
+                //}
+                //else
+                //{
+                //    var withBodies = EdsmSystem.ParseWithBodies(json);
+                //    if (withBodies.Bodies?.Length > 0)
+                //    {
+                //        var sc = withBodies.Bodies.OfType<EdsmStar>().Count();
+                //        var pc = withBodies.Bodies.OfType<EdsmPlanet>().Count();
+
+                //        bodies = string.Join(", ", Elements());
+
+                //        IEnumerable<string> Elements()
+                //        {
+                //            if (sc > 0) yield return $"S: {sc}";
+                //            if (pc > 0) yield return $"P: {pc}";
+                //        }
+                //    }
+                //}
             }
 
             Console.WriteLine($"{name}\t{coordinates.X}\t{coordinates.Y}\t{coordinates.Z}\t{navSystem.starClass}\t{bodies}");
@@ -197,76 +205,76 @@ public class ExoBioSystemFinder
         }
     }
 
-    private IDictionary<string, (SimpleCoordinates coordinates, string starClass)> GetNavRouteSystems()
+    private IDictionary<string, (Coordinates coordinates, string starClass)> GetNavRouteSystems()
     {
-        Dictionary<string, (SimpleCoordinates coordinates, string starClass)> dict = new(StringComparer.InvariantCultureIgnoreCase);
+        Dictionary<string, (Coordinates coordinates, string starClass)> dict = new(StringComparer.InvariantCultureIgnoreCase);
 
-        foreach (var navRoute in GetRouteHistory())
+        foreach (var navRoute in NavRoute.GetRouteHistory())
         {
             foreach (var entry in navRoute.Route ?? [])
-                dict.TryAdd(entry.StarSystem!, (new SimpleCoordinates(entry.X, entry.Y, entry.Z), entry.StarClass ?? string.Empty));
+                dict.TryAdd(entry.StarSystem!, (new Coordinates(entry.X, entry.Y, entry.Z), entry.StarClass ?? string.Empty));
         }
 
         return dict;
     }
 
-    public static IEnumerable<NavRoute> GetRouteHistory()
-    {
-        var file = GameDataHelperSingleton.Instance.NavRouteHistoryFile;
+    //public static IEnumerable<NavRoute> GetRouteHistory()
+    //{
+    //    var file = GameDataHelperSingleton.Instance.NavRouteHistoryFile;
 
-        FileStream? stream = null;
-        StreamReader? reader = null;
+    //    FileStream? stream = null;
+    //    StreamReader? reader = null;
 
-        try
-        {
-            stream = file.Open(FileMode.Open, FileAccess.Read, FileShare.Read);
-            reader = new StreamReader(stream);
-        }
-        catch (Exception e)
-        {
-            reader?.Dispose();
-            stream?.Dispose();
-            throw new JournalFileException($"Failed to open navigation route history file \"{file.FullName}\"", e);
-        }
+    //    try
+    //    {
+    //        stream = file.Open(FileMode.Open, FileAccess.Read, FileShare.Read);
+    //        reader = new StreamReader(stream);
+    //    }
+    //    catch (Exception e)
+    //    {
+    //        reader?.Dispose();
+    //        stream?.Dispose();
+    //        throw new JournalFileException($"Failed to open navigation route history file \"{file.FullName}\"", e);
+    //    }
 
-        while (true)
-        {
-            string? line;
+    //    while (true)
+    //    {
+    //        string? line;
 
-            try
-            {
-                line = reader.ReadLine();
-                if (line == null)
-                    break;
+    //        try
+    //        {
+    //            line = reader.ReadLine();
+    //            if (line == null)
+    //                break;
 
-                if (string.IsNullOrWhiteSpace(line))
-                    continue;
-            }
-            catch (Exception e)
-            {
-                throw new JournalFileException($"Failed to read navigation route history file \"{file.FullName}\"", e);
-            }
+    //            if (string.IsNullOrWhiteSpace(line))
+    //                continue;
+    //        }
+    //        catch (Exception e)
+    //        {
+    //            throw new JournalFileException($"Failed to read navigation route history file \"{file.FullName}\"", e);
+    //        }
 
-            NavRoute? route;
+    //        NavRoute? route;
 
-            try
-            {
-                route = JsonSerializer.Deserialize<NavRoute>(line);
-            }
-            catch (Exception e)
-            {
-                throw new JournalFileException($"Failed to parse navigation route history entry.", e);
-            }
+    //        try
+    //        {
+    //            route = JsonSerializer.Deserialize<NavRoute>(line);
+    //        }
+    //        catch (Exception e)
+    //        {
+    //            throw new JournalFileException($"Failed to parse navigation route history entry.", e);
+    //        }
 
-            if (route == null)
-                throw new JournalFileException($"Failed to parse navigation route history entry deserialized as null.");
+    //        if (route == null)
+    //            throw new JournalFileException($"Failed to parse navigation route history entry deserialized as null.");
 
-            yield return route;
-        }
+    //        yield return route;
+    //    }
 
-        reader.Dispose();
-        stream.Dispose();
-    }
+    //    reader.Dispose();
+    //    stream.Dispose();
+    //}
 
     private IEnumerable<EdsmSystemSummary> GetSystemsFromEdsm(string[] systemNames)
     {
@@ -332,129 +340,5 @@ public class ExoBioSystemFinder
     private void Warning(string message) => _statusUpdateDelegate?.Invoke(message, StatusMessageSeverity.Warning);
 
     private void Error(string message) => _statusUpdateDelegate?.Invoke(message, StatusMessageSeverity.Error);
-
-    private void CacheSystemsInSphere(string centralSystemName, int radius)
-    {
-        var systems = LoadSystems();
-        Info($"Loaded {systems.Length} systems from cache.");
-        Info("Fetching systems in sphere from EDSM.");
-
-        var systemsInSphere = FetchSystemsInSphere(centralSystemName, radius).ToDictionary(s => s.Name!);
-        Info($"Fetched {systemsInSphere.Count} system summaries from EDSM.");
-
-        var systemNames = new HashSet<string>(systems.Select(s => s.Name!), StringComparer.InvariantCultureIgnoreCase);
-        var nonCachedSystemNames = systemsInSphere.Values.Where(s => !systemNames.Contains(s.Name!)).Select(s => s.Name!).Distinct().ToArray();
-
-        if (nonCachedSystemNames.Length > 0)
-        {
-            Info($"Fetching {nonCachedSystemNames.Length} non-cached systems with bodies from EDSM.");
-            var nonCachedSystems = FetchSystems(nonCachedSystemNames).ToArray();
-            Info($"Fetched {nonCachedSystems} systems from EDSM.");
-
-            if (nonCachedSystems.Length > 0)
-            {
-                foreach (var system in nonCachedSystems)
-                {
-                    if (systemsInSphere.TryGetValue(system.Name!, out var systemWithCoordinates))
-                    {
-                        if (systemWithCoordinates.Coordinates != null)
-                            system.Coordinates = systemWithCoordinates.Coordinates;
-                    }
-                }
-
-                systems = systems.Concat(nonCachedSystems).ToArray();
-                SaveSystems(systems);
-                Info($"Saved {systems.Length} systems to cache.");
-            }
-        }
-    }
-
-    private EdsmSystemSummary[] FetchSystemsInSphere(string centralSystemName, int radius)
-    {
-        var parameters = new EdsmGetSystemsInSphereParameters
-        {
-            SystemName = centralSystemName,
-            Radius = radius,
-            ShowCoordinates = true
-        };
-
-        var json = _edsmClient.GetSystemsInSphere(parameters);
-
-        if (string.IsNullOrEmpty(json) || json == "{}")
-        {
-            Error("Empty response received from EDSM for systems in sphere.");
-            return [];
-        }
-
-        return EdsmSystemSummary.ParseArray(json);
-    }
-
-
-    private IEnumerable<EdsmSystem> FetchSystems(string[] systemNames)
-    {
-        var total = systemNames.Length;
-        foreach (var (index, systemName) in systemNames.WithIndex())
-        {
-            Info($"Fetching SystemID {systemName} ({index + 1} of {total}) from EDSM.");
-
-            var parameters = new EdsmGetSystemParameters
-            {
-                SystemName = systemName
-            };
-
-            _edsmClient.Throttle();
-            var json = _edsmClient.GetSystemBodies(parameters);
-
-            if (string.IsNullOrEmpty(json) || json == "{}")
-            {
-                Warning($"Empty response for SystemID {systemName}.");
-                continue;
-            }
-
-            var system = EdsmSystem.ParseWithBodies(json);
-
-            yield return system;
-        }
-    }
-
-
-    private EdsmSystem[] LoadSystems()
-    {
-        if (!SystemCacheFile.Exists)
-            return [];
-
-        using var stream = SystemCacheFile.Open(FileMode.Open, FileAccess.Read, FileShare.Read);
-
-        var task = MemoryPackSerializer.DeserializeAsync<EdsmSystem[]>(stream);
-        task.AsTask().Wait();
-        return task.Result ?? [];
-    }
-
-    private void SaveSystems(EdsmSystem[] systems)
-    {
-        using var stream = SystemCacheFile.Open(FileMode.Create, FileAccess.Write, FileShare.Write);
-        var task = MemoryPackSerializer.SerializeAsync(stream, systems);
-        task.AsTask().Wait();
-    }
-
-    private FileInfo SystemCacheFile => _systemCacheFile ??= GetSystemCacheFile();
-
-    private FileInfo? _systemCacheFile;
-
-    private FileInfo GetSystemCacheFile() => new FileInfo(Path.Combine(DataDirectory.FullName, "systems.cache"));
-
-
-    private DirectoryInfo DataDirectory => _dataDirectory ??= GetDataDirectory();
-
-    private DirectoryInfo? _dataDirectory;
-
-    private static DirectoryInfo GetDataDirectory()
-    {
-        var localAppDataDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var dataDir = Path.Combine(localAppDataDir, "EDExoBioSystemFinder");
-        var dirInfo = new DirectoryInfo(dataDir);
-        if (!dirInfo.Exists)
-            dirInfo.Create();
-        return dirInfo;
-    }
+    
 }

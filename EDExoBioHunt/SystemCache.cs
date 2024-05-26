@@ -1,8 +1,8 @@
 ﻿using MemoryPack;
 using Octurnion.Common.Utils;
+using Octurnion.EliteDangerousUtils;
 using Octurnion.EliteDangerousUtils.EDSM;
 using Octurnion.EliteDangerousUtils.EDSM.Client;
-using Octurnion.EliteDangerousUtils.Routing;
 
 namespace EDExoBioHunt;
 
@@ -24,6 +24,12 @@ public class SystemCache
 
     private Dictionary<string, EdsmSystem>? _systemsByName;
 
+    public IEnumerable<EdsmSystem> GetSystemsInSphere(ICoordinates coordinates, double radius) =>
+        _systems.Where(s => s.Coordinates != null && s.Coordinates.Distance(coordinates) <= radius);
+
+    public IEnumerable<EdsmSystem> GetSystemsInCuboid(ICuboid cuboid) =>
+        _systems.Where(s => s.Coordinates != null && cuboid.Contains(s.Coordinates));
+
     public void CacheSystems(IEnumerable<string> systemNames)
     {
         var namesToAdd = systemNames.Where(n => !SystemsByName.ContainsKey(n)).ToArray();
@@ -41,37 +47,32 @@ public class SystemCache
 
     public void CacheSystemsInSphere(string centralSystemName, int radius)
     {
-        CacheSystemsInSphere(FetchSystemsInSphere(centralSystemName, radius));
+        AddSystemSummariesToCache(FetchSystemsInSphere(centralSystemName, radius));
     }
 
     public void CacheSystemsInSphere(ICoordinates center, int radius)
     {
-        CacheSystemsInSphere(FetchSystemsInSphere(center, radius));
+        AddSystemSummariesToCache(FetchSystemsInSphere(center, radius));
     }
 
-    private void CacheSystemsInSphere(EdsmSystemSummary[] systems)
+    public void CacheSystemsInCube(string centralSystemName, int size)
+    {
+        AddSystemSummariesToCache(FetchSystemsInCube(centralSystemName, size));
+    }
+
+    public void CacheSystemsInCube(ICoordinates center, int size)
+    {
+        AddSystemSummariesToCache(FetchSystemsInCube(center, size));
+    }
+
+    private void AddSystemSummariesToCache(EdsmSystemSummary[] systems)
     {
         var systemsToAdd = systems.Where(s => !SystemsByName.ContainsKey(s.Name!)).Select(s => new EdsmSystem(s)).ToArray();
 
         if (systemsToAdd.Length == 0)
             return;
 
-
         AddBodiesToSystems(systemsToAdd);
-
-        //var systemsToAddByName = systemsToAdd.ToDictionary(s => s.Name!, StringComparer.InvariantCultureIgnoreCase);
-
-        //foreach (var systemWithBodies in FetchBodiesForSystems(systemsToAdd.Select(s => s.Name!).ToArray()))
-        //{
-        //    if (!systemsToAddByName.TryGetValue(systemWithBodies.Name!, out var system))
-        //    {
-        //        Warning($"Failed to find system {systemWithBodies.Name!} while updating systems with bodies.");
-        //        continue;
-        //    }
-
-        //    if (systemWithBodies.Bodies != null)
-        //        system.Bodies = systemWithBodies.Bodies;
-        //}
 
         _systems = _systems.Concat(systemsToAdd).ToArray();
         SaveSystems(_systems);
@@ -95,16 +96,12 @@ public class SystemCache
         }
     }
 
-    private EdsmSystemSummary[] FetchSystemsInSphere(string centralSystemName, int radius)
-    {
-        return FetchSystemsInSphere(new EdsmGetSystemsInSphereParameters { SystemName = centralSystemName, Radius = radius });
-    }
+    private EdsmSystemSummary[] FetchSystemsInSphere(string centralSystemName, int radius) =>
+        FetchSystemsInSphere(new EdsmGetSystemsInSphereParameters { SystemName = centralSystemName, Radius = radius });
     
-    private EdsmSystemSummary[] FetchSystemsInSphere(ICoordinates center, int radius)
-    {
-        return FetchSystemsInSphere(new EdsmGetSystemsInSphereParameters { Coordinates = new EdsmCoordinates { X = center.X, Y = center.Y, Z = center.Z }, Radius = radius });
-    }
-
+    private EdsmSystemSummary[] FetchSystemsInSphere(ICoordinates center, int radius) =>
+        FetchSystemsInSphere(new EdsmGetSystemsInSphereParameters { Coordinates = new EdsmCoordinates { X = center.X, Y = center.Y, Z = center.Z }, Radius = radius });
+   
     private EdsmSystemSummary[] FetchSystemsInSphere(EdsmGetSystemsInSphereParameters parameters)
     {
         parameters.ShowCoordinates = true;
@@ -115,6 +112,28 @@ public class SystemCache
         if (string.IsNullOrEmpty(json) || json == "{}")
         {
             Error($"EDSM returned empty response for {nameof(_edsmClient.GetSystemsInSphere)}.");
+            return [];
+        }
+
+        return EdsmSystemSummary.ParseArray(json);
+    }
+
+    private EdsmSystemSummary[] FetchSystemsInCube(string centralSystem, int size) =>
+        FetchSystemsInCube(new EdsmGetSystemsInCubeParameters {SystemName = centralSystem, Size = size});
+
+    private EdsmSystemSummary[] FetchSystemsInCube(ICoordinates center, int size) =>
+        FetchSystemsInCube(new EdsmGetSystemsInCubeParameters { Coordinates = new EdsmCoordinates { X = center.X, Y = center.Y, Z = center.Z }, Size = size });
+
+    private EdsmSystemSummary[] FetchSystemsInCube(EdsmGetSystemsInCubeParameters parameters)
+    {
+        parameters.ShowCoordinates = true;
+
+        _edsmClient.Throttle();
+        var json = _edsmClient.GetSystemsInCube(parameters);
+
+        if (string.IsNullOrEmpty(json) || json == "{}")
+        {
+            Error($"EDSM returned empty response for {nameof(_edsmClient.GetSystemsInCube)}.");
             return [];
         }
 

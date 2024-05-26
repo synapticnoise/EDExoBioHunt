@@ -1,5 +1,6 @@
 ﻿using MemoryPack;
 using Octurnion.Common.Utils;
+using Octurnion.EliteDangerousUtils;
 using Octurnion.EliteDangerousUtils.EDSM;
 using Octurnion.EliteDangerousUtils.EDSM.Client;
 using Octurnion.EliteDangerousUtils.Journal;
@@ -12,6 +13,7 @@ public class ExoBioAnalyser
 {
     private readonly StatusUpdateDelegate? _statusUpdateDelegate;
     private readonly EdsmClient _edsmClient = new();
+    private readonly SystemCache _systemCache = new();
 
     public ExoBioAnalyser(StatusUpdateDelegate? statusUpdateDelegate)
     {
@@ -21,8 +23,15 @@ public class ExoBioAnalyser
     public void OrganicFindingsReport()
     {
         var scans = GetEntityScans().ToArray();
-        var systemNames = scans.Select(s => s.SystemName).Distinct();
-        var systemsWithBodies = GetSystems(systemNames);
+        var systemNames = scans.Select(s => s.SystemName).Distinct().ToArray();
+        
+        _systemCache.CacheSystems(systemNames);
+        
+        var systemsWithBodies = systemNames
+            .Select(n => _systemCache.SystemsByName.TryGetValue(n, out var s) ? s : null)
+            .Where(s => s != null)
+            .ToDictionary(s => s.Name!);
+
         var scannedEntities = GetEntityInfo().ToArray();
 
         bool newOrganic = true, newSystem = true;
@@ -40,7 +49,7 @@ public class ExoBioAnalyser
             {
                 newSystem = true;
                 
-                if (!systemsWithBodies.TryGetValue(gSystemName.Key, out var system))
+                if (systemsWithBodies.TryGetValue(gSystemName.Key, out var system))
                     throw new KeyNotFoundException($"Failed to find system {gSystemName.Key}");
 
                 var systemNode = system.BuildMap();
@@ -97,7 +106,12 @@ public class ExoBioAnalyser
         var entityInfoBySpeciesId = GetEntityInfo().ToDictionary(e => e.Id);
         var valuableScans = GetScansWithInfo().Where(t => t.info.Value >= minValue).ToArray();
         var systemNames = valuableScans.Select(t => t.scan.SystemName).Distinct().ToArray();
-        var systemsWithBodies = GetSystems(systemNames);
+        _systemCache.CacheSystems(systemNames);
+        var systemsWithBodies = systemNames
+            .Select(n => _systemCache.SystemsByName.TryGetValue(n, out var s) ? s : null)
+            .Where(s => s != null)
+            .ToDictionary(s => s.Name!);
+
         var scanSystems = GetScanSystems().ToArray();
         var groups = FindInitialGroups().ToList();
         ExpandGroups();
@@ -186,7 +200,7 @@ public class ExoBioAnalyser
                 List<string> toRemove = [];
                 foreach (var (name, system) in candidates)
                 {
-                    if (system.Distance(group.BoundingBox.Center) <= maxDistance)
+                    if (system.Distance(group.Cuboid.Center) <= maxDistance)
                     {
                         group.AddSystem(system);
                         toRemove.Add(name);
@@ -365,162 +379,4 @@ public class ExoBioAnalyser
         return JournalFile.GetJournalEntries().Where(e => e.Entry != null && e.Entry.GetType() != baseType && e.Entry.Timestamp.HasValue).Select(e => e.Entry).OrderBy(e => e!.Timestamp)!;
     }
 
-    private IDictionary<string, EdsmSystem> GetSystems(IEnumerable<string> systemNames)
-    {
-        var existingSystems = LoadSystems();
-        Info($"Loaded {existingSystems.Length} systems.");
-        var existingSystemNames = existingSystems.Select(s => s.Name!).ToArray();
-        var namesToQuery = systemNames.Except(existingSystemNames, StringComparer.InvariantCultureIgnoreCase).Distinct().ToArray();
-
-        var needToSave = false;
-
-        if (namesToQuery.Length > 0)
-        {
-            Info($"Fetching {namesToQuery.Length} new systems.");
-            var fetchedSystems = FetchSystems(namesToQuery).ToArray();
-
-            if (fetchedSystems.Length > 0)
-            {
-                Info($"Adding {fetchedSystems.Length} new systems to cache.");
-                existingSystems = existingSystems.Concat(fetchedSystems).ToArray();
-                needToSave = true;
-            }
-        }
-
-        if (existingSystems.Any(s => s.Coordinates == null))
-        {
-            needToSave = FetchSystemCoordinates(existingSystems) || needToSave;
-        }
-
-        if (needToSave)
-        {
-            SaveSystems(existingSystems);
-            Info($"Saved {existingSystems.Length} systems.");
-        }
-
-        return existingSystems.ToDictionary(s => s.Name!, StringComparer.InvariantCultureIgnoreCase);
-    }
-
-    private IEnumerable<EdsmSystem> FetchSystems(string[] systemNames)
-    {
-        var total = systemNames.Length;
-        foreach (var (index, systemName) in systemNames.WithIndex())
-        {
-            Info($"Fetching SystemID {systemName} ({index+1} of {total}) from EDSM.");
-            
-            var parameters = new EdsmGetSystemParameters
-            {
-                SystemName = systemName,
-            };
-
-            _edsmClient.Throttle();
-            var json = _edsmClient.GetSystemBodies(parameters);
-
-            if (string.IsNullOrEmpty(json) || json == "{}")
-            {
-                Warning($"Empty response for SystemID {systemName}.");
-                continue;
-            }
-
-            var system = EdsmSystem.ParseWithBodies(json);
-
-            yield return system;
-        }
-    }
-
-    private bool FetchSystemCoordinates(EdsmSystem[] systems)
-    {
-        const int systemsPerCall = 10;
-
-        var systemsNeedingCoordinates = systems.Where(s => s.Coordinates == null).ToArray();
-        if (systemsNeedingCoordinates.Length == 0)
-            return false;
-
-        var systemsByName = systems.ToDictionary(s => s.Name!);
-
-        Info($"Fetching coordinates from EDSM for {systemsNeedingCoordinates.Length} systems.");
-        var systemNames = systemsNeedingCoordinates.Select(s => s.Name!).ToArray();
-
-        var updateCount = 0;
-        var blocks = systemNames.Partition(systemsPerCall).ToArray();
-        foreach (var (index, block) in blocks.WithIndex())
-        {
-            var parameters = new EdsmGetMultipleSystemsParameters
-            {
-                SystemNames = block.ToArray(),
-                ShowCoordinates = true
-            };
-
-            Info($"Fetching block {index+1} of {blocks.Length}");
-            _edsmClient.Throttle();
-            var json = _edsmClient.GetSystems(parameters);
-
-            if (string.IsNullOrEmpty(json) || json == "{}")
-            {
-                Warning($"Empty response received from EDSM.");
-                continue;
-            }
-
-            var fetchedSystems = EdsmSystemSummary.ParseArray(json);
-
-            foreach (var system in fetchedSystems)
-            {
-                if (system.Coordinates == null)
-                    continue;
-
-                if (!systemsByName.TryGetValue(system.Name!, out var toUpdate))
-                {
-                    Warning($"Could not find returned system {system.Name} in dictionary.");
-                    continue;
-                }
-
-                toUpdate.Coordinates = system.Coordinates;
-                updateCount++;
-            }
-        }
-
-        Info($"Updated coordinates for {updateCount} systems.");
-        return updateCount > 0;
-    }
-
-
-    private EdsmSystem[] LoadSystems()
-    {
-        if (!SystemCacheFile.Exists)
-            return [];
-
-        using var stream = SystemCacheFile.Open(FileMode.Open, FileAccess.Read, FileShare.Read);
-
-        var task = MemoryPackSerializer.DeserializeAsync<EdsmSystem[]>(stream);
-        task.AsTask().Wait();
-        return task.Result ?? [];
-    }
-
-    private void SaveSystems(EdsmSystem[] systems)
-    {
-        using var stream = SystemCacheFile.Open(FileMode.Create, FileAccess.Write, FileShare.Write);
-        var task = MemoryPackSerializer.SerializeAsync(stream, systems);
-        task.AsTask().Wait();
-    }
-
-    private FileInfo SystemCacheFile => _systemCacheFile ??= GetSystemCacheFile();
-
-    private FileInfo? _systemCacheFile;
-
-    private FileInfo GetSystemCacheFile() => new FileInfo(Path.Combine(DataDirectory.FullName, "systems.cache"));
-
-
-    private DirectoryInfo DataDirectory => _dataDirectory ??= GetDataDirectory();
-    
-    private DirectoryInfo? _dataDirectory;
-
-    private static DirectoryInfo GetDataDirectory()
-    {
-        var localAppDataDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var dataDir = Path.Combine(localAppDataDir, "EDExoBioAnalyser");
-        var dirInfo = new DirectoryInfo(dataDir);
-        if (!dirInfo.Exists)
-            dirInfo.Create();
-        return dirInfo;
-    }
 }

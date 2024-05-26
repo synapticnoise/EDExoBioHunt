@@ -8,11 +8,11 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(Configuration)'=='Release'">
-    <PackageReference Include="Octurnion.EliteDangerousUtils" Version="0.1.11" />
+    <PackageReference Include="Octurnion.EliteDangerousUtils" Version="0.1.13" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)'=='Debug'">
-    <PackageReference Include="Octurnion.EliteDangerousUtils.Debug" Version="0.1.11" />
+    <PackageReference Include="Octurnion.EliteDangerousUtils.Debug" Version="0.1.13" />
   </ItemGroup>
 
 </Project>

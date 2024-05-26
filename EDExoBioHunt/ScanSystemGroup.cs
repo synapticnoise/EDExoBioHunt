@@ -1,4 +1,4 @@
-﻿using Octurnion.EliteDangerousUtils.Routing;
+﻿using Octurnion.EliteDangerousUtils;
 
 namespace EDExoBioHunt;
 
@@ -39,7 +39,7 @@ public class ScanSystemGroup
         return _systems.Values.OrderBy(s => s.Distance(Center)).First();
     }
     
-    public ICoordinates Center => BoundingBox.Center;
+    public ICoordinates Center => Cuboid.Center;
 
     public double Radius => _radius ??= ComputeRadius();
 
@@ -51,30 +51,13 @@ public class ScanSystemGroup
         return _systems.Values.Max(s => s.Distance(center));
     }
 
-    public BoundingBox BoundingBox => _boundingBox ??= new BoundingBox(_systems.Values);
+    public Cuboid Cuboid => _boundingBox ??= new Cuboid(_systems.Values);
 
-    private BoundingBox? _boundingBox;
+    private Cuboid? _boundingBox;
 
-    public ICoordinates MeanCentroid => _meanCentroid ??= ComputeMeanCentroid();
+    public ICoordinates MeanCentroid => _meanCentroid ??= CoordinatesExtensions.ComputeMeanCentroid(Systems);
 
-    private SimpleCoordinates? _meanCentroid;
+    private ICoordinates? _meanCentroid;
 
-    private SimpleCoordinates ComputeMeanCentroid()
-    {
-        if (_systems.Count < 1)
-            throw new InvalidOperationException($"Cannot compute centroid of an empty group.");
-
-        double xSum = 0, ySum = 0, zSum = 0;
-
-        foreach (var system in _systems.Values)
-        {
-            xSum += system.X;
-            ySum += system.Y;
-            ySum += system.Z;
-        }
-
-        return new SimpleCoordinates(xSum / _systems.Count, ySum / _systems.Count, zSum / _systems.Count);
-    }
-
-    public override string ToString() => $"{Count} systems, centered on [{Center}] (nearest {CenterSystem.System.Name} @ [{CenterSystem}], {CenterSystem.Distance(Center)} LY off-center), size [{BoundingBox.Size}], radius {Radius:F1}";
+    public override string ToString() => $"{Count} systems, centered on [{Center}] (nearest {CenterSystem.System.Name} @ [{CenterSystem}], {CenterSystem.Distance(Center)} LY off-center), size [{Cuboid.Size}], radius {Radius:F1}";
 }

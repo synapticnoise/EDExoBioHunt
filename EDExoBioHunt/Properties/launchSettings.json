@@ -2,7 +2,7 @@
   "profiles": {
     "EDExoBioHunt": {
       "commandName": "Project",
-      "commandLineArgs": "\"C:\\Users\\Mike\\Dropbox\\ExoBioList.txt\""
+      "commandLineArgs": "-mode SystemFinder -system \"Pru Euq DN-S c17-0\" -size 50 -mc cd"
     }
   }
 }

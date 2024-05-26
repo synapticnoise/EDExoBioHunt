@@ -1,8 +1,6 @@
-﻿using System.Reflection.Metadata;
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using Octurnion.Common.Utils;
 using Octurnion.EliteDangerousUtils.EDSM;
-using Octurnion.EliteDangerousUtils.EDSM.Client;
 
 namespace EDExoBioHunt;
 
@@ -248,12 +246,4 @@ public static class EdsmSystemExtensions
 
         return systemNode;
     }
-}
-
-
-public static class EdsmStarExtensions
-{
-
-
-
 }
