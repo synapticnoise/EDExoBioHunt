@@ -42,6 +42,10 @@ internal class Program
                 RunHuntList(options.HuntListOptions);
                 break;
 
+            case Options.ModeEnum.FindingSummary:
+                RunFindingSummary();
+                break;
+
             default:
                 Error($"Unsupported mode {options.Mode}");
                 break;
@@ -59,6 +63,12 @@ internal class Program
     {
         var finder = new ExoBioSystemFinder(Message);
         finder.BuildHuntList(options!.File);
+    }
+
+    private static void RunFindingSummary()
+    {
+        var analyser = new ExoBioAnalyser(Message);
+        analyser.OrganicFindingSummaryReport();
     }
     
     private static void Write(string message)

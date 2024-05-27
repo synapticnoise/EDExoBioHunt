@@ -1,11 +1,9 @@
-﻿using MemoryPack;
-using Octurnion.Common.Utils;
+﻿using Octurnion.Common.Utils;
 using Octurnion.EliteDangerousUtils;
 using Octurnion.EliteDangerousUtils.EDSM;
 using Octurnion.EliteDangerousUtils.EDSM.Client;
 using Octurnion.EliteDangerousUtils.Journal;
 using Octurnion.EliteDangerousUtils.Journal.Entries;
-using Octurnion.EliteDangerousUtils.Routing;
 
 namespace EDExoBioHunt;
 
@@ -13,11 +11,107 @@ public class ExoBioAnalyser
 {
     private readonly StatusUpdateDelegate? _statusUpdateDelegate;
     private readonly EdsmClient _edsmClient = new();
-    private readonly SystemCache _systemCache = new();
+    private readonly SystemCache _systemCache;
 
     public ExoBioAnalyser(StatusUpdateDelegate? statusUpdateDelegate)
     {
         _statusUpdateDelegate = statusUpdateDelegate;
+        _systemCache = new SystemCache(_statusUpdateDelegate);
+    }
+
+    public void OrganicFindingSummaryReport()
+    {
+        var scans = GetEntityScans().ToArray();
+        var systemNames = scans.Select(s => s.SystemName).Distinct().ToArray();
+
+        _systemCache.CacheSystems(systemNames);
+
+        var relevantSystems = systemNames
+            .Select(n => _systemCache.SystemsByName.TryGetValue(n, out var s) ? s : null)
+            .Where(s => s != null)
+            .ToDictionary(s => s!.Name!);
+
+        var entityValues = GetEntityInfo().ToArray();
+
+        Console.WriteLine($"Entity\tValue\tMass Code\tStar Type\tPlanet Types\tAtmosphere Types");
+
+        bool newEntity, newMassCode;
+
+        foreach (var entityInfo in entityValues.OrderByDescending(v => v.Value))
+        {
+            newEntity = true;
+
+            var byMassCode = scans
+                .Where(s => s.SpeciesId == entityInfo.Id)
+                .GroupBy(s => GetMassCode(s.SystemName));
+
+            foreach (var gMassCode in byMassCode.OrderByDescending(g => g.Count()))
+            {
+                newMassCode = true;
+                var byStarType = gMassCode.GroupBy(g => GetStarType(g.SystemName));
+
+                foreach (var gStarType in byStarType.OrderByDescending(g => g.Count()))
+                {
+                    var pTracker = new StringCountTracker();
+                    var aTracker = new StringCountTracker();
+
+                    foreach (var scan in gStarType)
+                    {
+                        if (!_systemCache.SystemsByName.TryGetValue(scan.SystemName, out var system))
+                        {
+                            pTracker.Add("_");
+                            aTracker.Add("_");
+                            continue;
+                        }
+
+                        var planet = system.Bodies?.OfType<EdsmPlanet>().FirstOrDefault(b => b.BodyId == scan.BodyId);
+
+                        if(planet == null)
+                        {
+                            pTracker.Add("_");
+                            aTracker.Add("_");
+                            continue;
+                        }
+
+                        pTracker.Add(planet.SubType ?? "_");
+                        aTracker.Add(planet.AtmosphereType ?? "_");
+                    }
+
+                    var pTypes = pTracker.Counts.OrderByDescending(c => c.Value).Select(c => $"{c.Key} ({c.Value})");
+                    var aTypes = aTracker.Counts.OrderByDescending(c => c.Value).Select(c => $"{c.Key} ({c.Value})");
+
+                    Console.WriteLine(string.Join("\t", Columns()));
+                    newEntity = newMassCode = false;
+
+
+                    IEnumerable<string> Columns()
+                    {
+                        yield return newEntity ? entityInfo.Species : string.Empty;
+                        yield return newEntity ? (entityInfo.Value / 1000000).ToString("F1") : string.Empty;
+
+                        yield return newMassCode ? gMassCode.Key : string.Empty;
+
+                        yield return gStarType.Key;
+
+                        yield return string.Join(", ", pTypes);
+                        yield return string.Join(", ", aTypes);
+                    }
+                }
+            }
+        }
+    }
+
+    private string GetMassCode(string systemName)
+    {
+        var b = SystemNameBreakout.Parse(systemName);
+        return b != null ? b.MassCode : "_";
+    }
+    private string GetStarType(string systemName)
+    {
+        if (!_systemCache.SystemsByName.TryGetValue(systemName, out var system))
+            return "_";
+
+        return system.GetPrimaryStarClass() ?? "_";
     }
 
     public void OrganicFindingsReport()
@@ -30,15 +124,15 @@ public class ExoBioAnalyser
         var systemsWithBodies = systemNames
             .Select(n => _systemCache.SystemsByName.TryGetValue(n, out var s) ? s : null)
             .Where(s => s != null)
-            .ToDictionary(s => s.Name!);
+            .ToDictionary(s => s!.Name!);
 
-        var scannedEntities = GetEntityInfo().ToArray();
+        var entityValues = GetEntityInfo().ToArray();
 
         bool newOrganic = true, newSystem = true;
 
         Console.WriteLine("Species\tValue\tSystem\tPrimary\tSize\tPlanet\tType\tAtmosphere");
 
-        foreach (var entityInfo in scannedEntities.OrderByDescending(e => e.Value))
+        foreach (var entityInfo in entityValues.OrderByDescending(e => e.Value))
         {
             newOrganic = true;
             var scansForEntityBySystemName = scans.Where(s => s.SpeciesId == entityInfo.Id).GroupBy(s => s.SystemName);

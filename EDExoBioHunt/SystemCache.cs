@@ -107,6 +107,7 @@ public class SystemCache
         parameters.ShowCoordinates = true;
 
         _edsmClient.Throttle();
+        Info("Fetching systems in sphere from EDSM.");
         var json = _edsmClient.GetSystemsInSphere(parameters);
 
         if (string.IsNullOrEmpty(json) || json == "{}")
@@ -129,6 +130,7 @@ public class SystemCache
         parameters.ShowCoordinates = true;
 
         _edsmClient.Throttle();
+        Info("Fetching systems in cube from EDSM.");
         var json = _edsmClient.GetSystemsInCube(parameters);
 
         if (string.IsNullOrEmpty(json) || json == "{}")

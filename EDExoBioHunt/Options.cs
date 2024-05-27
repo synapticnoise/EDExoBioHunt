@@ -19,7 +19,7 @@ public class Options
     {
         SystemFinder,
         HuntList,
-        FindingsAnalyser
+        FindingSummary,
     }
 
     public ModeEnum Mode { get; init; }
@@ -48,6 +48,9 @@ public class Options
             case ModeEnum.HuntList:
                 var hlo = EDExoBioHunt.HuntListOptions.Parse(args);
                 return new Options { Mode = mode.Value, HuntListOptions = hlo };
+
+            case ModeEnum.FindingSummary:
+                return new Options { Mode = mode.Value };
 
             //case ModeEnum.FindingsAnalyser:
             //    break;
